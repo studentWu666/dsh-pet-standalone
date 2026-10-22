@@ -13,10 +13,16 @@ import { configPathsFor, describePets, parseArgs } from './options.ts';
 import { DEFAULT_STANDALONE_PORT } from './server.ts';
 
 describe('parseArgs —— 独立模式的命令行契约', () => {
-  test('无参数：默认端口、不体检、不打印用法', () => {
+  test('无参数：默认端口、不体检、不打印用法、单实例', () => {
     const parsed = parseArgs([]);
     assert.ok('options' in parsed);
-    assert.deepEqual(parsed.options, { port: DEFAULT_STANDALONE_PORT, check: false, help: false });
+    assert.deepEqual(parsed.options, { port: DEFAULT_STANDALONE_PORT, check: false, help: false, multi: false });
+  });
+
+  test('--multi 关闭单实例保护', () => {
+    const parsed = parseArgs(['--multi']);
+    assert.ok('options' in parsed);
+    assert.equal(parsed.options.multi, true, '显式 --multi 才允许多开（默认必须是单实例）');
   });
 
   test('--port 的两种写法等价', () => {

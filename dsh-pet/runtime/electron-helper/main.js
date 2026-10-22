@@ -75,6 +75,19 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // 我们的 DPI 缓存与 Chromium profile 都会和别人混在一起。必须赶在任何 getPath('userData') 之前设。
 app.setName('dsh-pet-electron-helper');
 
+// 独立版专用 Chromium profile 目录（宿主经 DSH_PET_USER_DATA 注入）。
+// 默认路径 %APPDATA%\dsh-pet-electron-helper 会被"独立版"与"已安装的插件版"共用，
+// 两个实例同时运行时 Chromium 会抢同一份 profile 锁 —— 表现为
+// `Unable to move the cache: 拒绝访问` + GPU cache 创建失败 + GPU 进程 FATAL。
+// 独立版因此必须落地到自己的目录。必须在任何 getPath('userData') 之前设置。
+if (process.env.DSH_PET_USER_DATA) {
+  try {
+    app.setPath('userData', process.env.DSH_PET_USER_DATA);
+  } catch (error) {
+    console.error('[dsh-pet-desktop-helper] setPath(userData) failed:', error);
+  }
+}
+
 /** DPI 探测子进程模式：不建窗口，只把主屏 scaleFactor 打到 stdout 就退出（见 probePrimaryScale） */
 const DPI_PROBE = process.env.DSH_PET_DPI_PROBE === '1';
 /** 探测进程的输出标记（父进程按它抓值） */
@@ -125,8 +138,24 @@ if (!DPI_PROBE && HOST_PID > 0) {
 //   - 大透明窗移动覆盖小透明窗时，被覆盖窗口内容丢失（显示"消失"）
 // 本进程只渲染轻量宠物动画（640×360），改走软件合成以规避上述缺陷，
 // 不影响浏览器形态与主 DSH（独立进程）；非 Windows（macOS/Linux）合成路径不同，保留硬件加速。
+//
+// 另外：受限环境（虚拟化 / 远程桌面 / 沙箱）里 GPU 进程可能**启动即崩**，Chromium 连续丢帧后
+// 以 `GPU process isn't usable. Goodbye.` 直接 FATAL 整个 helper，表现为桌宠反复消失。
+// 透明小窗不需要 GPU 合成（webm 软件解码足够），因此默认显式关掉 GPU 进程；
+// 需要硬件解码时设 DSH_PET_GPU=1 恢复。
 if (process.platform === 'win32') {
   app.disableHardwareAcceleration();
+  const gpuMode = process.env.DSH_PET_GPU || 'in-process';
+  if (gpuMode === 'in-process') {
+    // GPU 服务跑在主进程里：受限环境（虚拟化 / 远程桌面 / 沙箱）下 GPU 子进程常启动即崩，
+    // 而 Chromium 连续丢帧后会以 `GPU process isn't usable` FATAL 整个 helper。
+    app.commandLine.appendSwitch('in-process-gpu');
+    app.commandLine.appendSwitch('disable-gpu-compositing');
+  } else if (gpuMode !== 'auto') {
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-gpu-compositing');
+    app.commandLine.appendSwitch('disable-gpu-rasterization');
+  }
 }
 
 // ---------- 全局 DPI 线性化（多显示器异构缩放的根因修复） ----------
@@ -262,10 +291,6 @@ function petScale() {
 /** bridge 模式：DSH_PET_BRIDGE=1（宿主注入）。开启时注册 dsh-pet-bridge scheme + 管道转发 */
 const BRIDGE = process.env.DSH_PET_BRIDGE === '1';
 
-/** 「打开网站」这一项的去向（宿主按自身形态注入）：
- *  'desktop' = 宿主是 DSH 桌面应用 → 唤起桌面应用主窗口；
- *  'site'    = dsh web / 独立模式 / 手写 start-desktop（无该变量）→ 原行为：默认浏览器打开站点。 */
-const OPEN_TARGET = process.env.DSH_PET_OPEN_TARGET === 'desktop' ? 'desktop' : 'site';
 /** 协议行前缀（与 helper-process.ts 的 BRIDGE_PREFIX 一致） */
 const BRIDGE_PREFIX = 'dsh-pet-bridge:';
 
@@ -536,8 +561,6 @@ function createPetWindows() {
         query: {
           configUrl,
           bridge: BRIDGE ? '1' : '0',
-          // 工具项「打开网站」的文案按宿主形态自动变（见 sprite.js）：desktop=唤起桌面应用 / site=打开站点
-          openTarget: OPEN_TARGET,
           scale: String(scale),
           petIndex: String(pet.index),
           workAreaW: String(area.width),
@@ -673,6 +696,16 @@ const PET_ROUTE = '/dsh-pet-7340';
 const ORIGIN = new URL(process.env.DSH_PET_CONFIG_URL || 'http://127.0.0.1:3080/dsh-pet-7340/config').origin;
 const TRAY_PLATFORM = trayPlatform(process.platform);
 
+/**
+ * 「用户主动退出」的退出码约定。
+ *
+ * 宿主对 helper 的默认态度是"崩了就重启"（守护 + 退避 + 熔断）。但托盘里的「退出桌宠」
+ * 是**用户意图**，不能被当成崩溃重启 —— 否则点了退出，750ms 后宠物又回来了。
+ * 因此约定的退出码交给宿主区分：宿主看到这个码就停止守护并整体退出。
+ * 取值避开 0（正常退出）、1（通用错误）与常见信号码。
+ */
+const USER_QUIT_EXIT_CODE = 88;
+
 /** 与宿主 handlePetRoute 通信：bridge 模式走管道，手动 start-desktop 流退回 HTTP 直连 */
 async function hostRequest(method, url, body) {
   if (BRIDGE) return bridgeRequest(method, url, body);
@@ -741,15 +774,26 @@ async function startTray() {
     if (!pets.length) return; // 配置里没有任何宠物：没有可切换的对象，不建托盘
     tray = new Tray(trayIcon());
     tray.setToolTip('dsh-pet 桌面宠物');
+    // 宠物显隐勾选 + 退出项。独立版没有宿主可关，托盘是唯一常驻入口 ——
+    // 终端隐藏运行时，用户必须能从托盘把整个应用关掉（否则只能任务管理器）。
     tray.setContextMenu(
-      Menu.buildFromTemplate(
-        pets.map((pet) => ({
+      Menu.buildFromTemplate([
+        ...pets.map((pet) => ({
           label: pet.name || pet.id,
           type: 'checkbox',
           checked: isDesktopDisplay(pet.display),
           click: () => traySetPetDisplay(pet.id, toggleDisplay(pet.display)),
         })),
-      ),
+        { type: 'separator' },
+        {
+          label: '退出桌宠',
+          click: () => {
+            // 先撤托盘图标（Windows 上不撤会留「幽灵图标」），再按约定码退出让宿主收尾
+            destroyTray();
+            app.exit(USER_QUIT_EXIT_CODE);
+          },
+        },
+      ]),
     );
     // Windows 上 setContextMenu 只接管右键，左键默认什么都不做（macOS 相反：左键即弹菜单）
     if (TRAY_PLATFORM.leftClickPopsMenu) tray.on('click', () => tray.popUpContextMenu());
@@ -936,23 +980,11 @@ app.whenReady().then(() => {
     });
   };
 
-  // 去向由宿主形态决定（OPEN_TARGET，宿主按自身形态注入）：
-  //   desktop（宿主 = DSH 桌面应用）→ 用应用自注册的 dsh:// 协议把主窗口叫回前台：已运行则第二个实例
-  //     被单实例锁拦下、宿主收到 second-instance 后 focusPrimaryWindow()；未运行则协议直接把应用拉起来。
-  //     比 spawn 宿主 exe 干净——不必处理 ELECTRON_RUN_AS_NODE（spawn 继承它就成了 node 模式，起不了界面）
-  //     与安装路径探测。
-  //   site（dsh web / 独立模式）→ 原行为：系统默认浏览器打开站点。
+  // 「打开设置」：交给系统默认浏览器打开本机设置页（URL 自带本次运行的访问令牌）。
+  // 独立版没有宿主应用可唤起，因此只有这一条路径。
   ipcMain.on('pet:open-site', (event, payload) => {
     const url = payload && typeof payload === 'object' ? String(payload.url || '') : '';
     if (!/^https?:[/][/]/.test(url)) return;
-    if (OPEN_TARGET === 'desktop') {
-      // 协议未注册（绿色版 / 注册表被清）时回落成打开站点，至少不是"点了没反应"
-      shell.openExternal('dsh://open').catch((error) => {
-        console.error('[dsh-pet-desktop-helper] open dsh:// failed, falling back to site:', error);
-        openSite(url);
-      });
-      return;
-    }
     openSite(url);
   });
 
@@ -1217,10 +1249,11 @@ app.whenReady().then(() => {
   }
 });
 
-// 退出时销毁托盘图标：不销毁会在 Windows 通知区留下「幽灵图标」（鼠标划过才消失）。
-// 注意宿主改 display 时是 SIGTERM/SIGKILL 硬杀（helper-process.ts），Windows 上那是
-// TerminateProcess、拦不到，所以这条只覆盖优雅退出（窗口全关、宿主存活探测判定退出等）。
-app.on('before-quit', () => {
+/**
+ * 撤掉托盘图标：不销毁会在 Windows 通知区留下「幽灵图标」（鼠标划过才消失）。
+ * `app.exit()` 不触发 before-quit，所以托盘「退出桌宠」必须显式调它一次。
+ */
+function destroyTray() {
   if (!tray) return;
   try {
     tray.destroy();
@@ -1228,6 +1261,13 @@ app.on('before-quit', () => {
     console.error('[dsh-pet-desktop-helper] tray destroy failed:', String(e && e.message ? e.message : e));
   }
   tray = null;
+}
+
+// 优雅退出（窗口全关、宿主存活探测判定退出等）时也撤图标。
+// 注意宿主改 display 时是 SIGTERM/SIGKILL 硬杀（helper-process.ts），Windows 上那是
+// TerminateProcess、拦不到，那条路径靠下一次启动重建托盘。
+app.on('before-quit', () => {
+  destroyTray();
 });
 
 app.on('window-all-closed', () => {

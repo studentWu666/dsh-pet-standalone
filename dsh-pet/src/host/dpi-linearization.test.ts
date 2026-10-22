@@ -21,7 +21,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -163,11 +163,17 @@ describe('源码守卫 —— main.js 只接线，规则住在 dpi-linearization
 });
 
 describe('守卫：dpi-linearization.js 必须在发布必需清单里', () => {
-  test('prepack-check.js 的 required 含它（main.js require，缺了会启动即崩）', () => {
-    const src = readSource('../../scripts/prepack-check.js');
+  test('package.json 的 files 覆盖整个 helper 目录，且该文件确实存在', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      files?: string[];
+    };
     assert.ok(
-      /'runtime\/electron-helper\/dpi-linearization\.js'/.test(src),
-      '漏了它，npm 包里就少一个 main.js 必需的模块',
+      (pkg.files ?? []).includes('runtime/electron-helper'),
+      'files 必须包含 runtime/electron-helper（整目录发布，漏了就少一个 main.js 必需的模块）',
+    );
+    assert.ok(
+      existsSync(new URL('../../runtime/electron-helper/dpi-linearization.js', import.meta.url)),
+      'runtime/electron-helper/dpi-linearization.js 必须存在（main.js require 它）',
     );
   });
 });

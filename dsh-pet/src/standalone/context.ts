@@ -17,6 +17,7 @@
  *   - `llm.*` → 模型清单为空；生成调用直接抛错 → 碎碎念/对话明确失败，不会静默
  *   - `on(...)` → 不订阅任何事件：独立模式没有 DSH 会话，工作状态因此保持空闲
  */
+import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /** 独立模式下余额路由报出的服务商 id（未登记 → `unsupported`，气泡里能看到它） */
@@ -60,6 +61,11 @@ export interface StandaloneContextOptions {
   routes?: RegisteredRoute[];
   ai?: StandaloneModelService;
   authenticatedUrl?: (baseUrl: string) => string;
+  /**
+   * 用户从桌面托盘「退出桌宠」时调用（宿主半侧收到 helper 的约定退出码后转到这里）。
+   * 不传则托盘退出只会让 helper 停下、宿主继续运行。
+   */
+  onQuit?: () => void;
 }
 
 export interface StandaloneContext {
@@ -73,21 +79,55 @@ export interface StandaloneContext {
   dispose(): Promise<void>;
 }
 
-/** 默认日志器：直接写控制台，格式与插件自身的 `[dsh-pet]` 前缀区分开 */
-export function createStandaloneLogger(): StandaloneLogger {
+/**
+ * 默认日志器：控制台 + 可选文件。
+ *
+ * 为什么要有文件：静默启动（vbs / 托盘）时没有控制台窗口，stdout 直接丢弃 ——
+ * 出问题时用户拿不到任何线索。因此同一份日志再追加写一份到数据目录，
+ * 超过上限就轮转成 `.1`（只保留一代，避免长期运行把磁盘写满）。
+ *
+ * @param logFile 追加写入的日志路径；不传则只写控制台
+ */
+export function createStandaloneLogger(logFile?: string): StandaloneLogger {
   const stamp = (): string => new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const write = (level: string, message: string): void => {
-    console.log(`[dsh-pet-standalone ${stamp()}] ${level} ${message}`);
+  const toFile = (line: string): void => {
+    if (!logFile) return;
+    try {
+      appendFileSync(logFile, line + '\n', 'utf8');
+    } catch {
+      /* 日志写不进去不该影响桌宠本体 */
+    }
   };
+  const write = (level: string, message: string): void => {
+    const line = `[dsh-pet ${stamp()}] ${level} ${message}`;
+    console.log(line);
+    toFile(line);
+  };
+  if (logFile) {
+    // 启动时做一次上限检查：单文件超过上限就改名成 .1（旧的 .1 被覆盖）
+    try {
+      if (existsSync(logFile) && statSync(logFile).size > LOG_ROTATE_BYTES) {
+        renameSync(logFile, `${logFile}.1`);
+      }
+    } catch {
+      /* 轮转失败就继续往原文件追加 */
+    }
+  }
   return {
     info: (message) => write('INFO ', message),
     warn: (message) => write('WARN ', message),
     error: (message) => write('ERROR', message),
     debug: (message) => {
-      if (process.env.DSH_PET_STANDALONE_DEBUG === '1') write('DEBUG', message);
+      // 两个变量名都认：旧脚本用的是 DSH_PET_STANDALONE_DEBUG
+      if (process.env.DSH_PET_DEBUG === '1' || process.env.DSH_PET_STANDALONE_DEBUG === '1') {
+        write('DEBUG', message);
+      }
     },
   };
 }
+
+/** 日志轮转阈值（单文件上限，10 MB） */
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
 
 /**
  * 建一个独立模式的伪 ctx。
@@ -166,6 +206,8 @@ export function createStandaloneContext(options: StandaloneContextOptions): Stan
         }
       : {}),
     commands: { register: (): (() => void) => () => {} },
+    // 桌面托盘的「退出桌宠」→ 宿主整体收尾（见 StandaloneContextOptions.onQuit）
+    ...(options.onQuit ? { standaloneQuit: { request: options.onQuit } } : {}),
     agentDefaultModel: {
       currentSelection: (): { provider: string; model: string } =>
         ai?.currentSelection() ?? { provider: STANDALONE_PROVIDER, model: '' },

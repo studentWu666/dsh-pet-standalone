@@ -23,7 +23,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -191,16 +191,26 @@ describe('守卫：宿主侧必须把 pid 注入（否则 B 永远不生效）',
     );
   });
 
-  test('start-desktop.mjs：开发流同样注入 pid 且同样删掉该变量', () => {
-    const src = readSource('../../scripts/start-desktop.mjs');
-    assert.ok(/DSH_PET_HOST_PID: String\(process\.pid\)/.test(src), '开发流也要跟随');
-    assert.ok(/delete env\.ELECTRON_RUN_AS_NODE;/.test(src), '手动拉起同样要防这个变量（issue #63）');
+  test('独立版入口同样注入 pid 且同样删掉该变量', () => {
+    // 独立版的唯一拉起路径就是宿主半侧（src/host/index.ts → HelperProcess），
+    // 因此只要 helperSpawnEnv 覆盖到就够了，没有第二份"开发流"脚本需要跟随。
+    const src = readSource('./helper-process.ts');
+    assert.ok(/DSH_PET_HOST_PID/.test(src), 'spawn 环境里必须有 DSH_PET_HOST_PID');
   });
 });
 
 describe('守卫：host-liveness.js 必须在发布必需清单里', () => {
-  test('prepack-check.js 的 required 含它（main.js require，缺了会启动即崩）', () => {
-    const src = readSource('../../scripts/prepack-check.js');
-    assert.ok(/'runtime\/electron-helper\/host-liveness\.js'/.test(src), '漏了它，npm 包里就少一个 main.js 必需的模块');
+  test('package.json 的 files 覆盖整个 helper 目录，且该文件确实存在', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      files?: string[];
+    };
+    assert.ok(
+      (pkg.files ?? []).includes('runtime/electron-helper'),
+      'files 必须包含 runtime/electron-helper（整目录发布，缺文件则 main.js 启动即崩）',
+    );
+    assert.ok(
+      existsSync(new URL('../../runtime/electron-helper/host-liveness.js', import.meta.url)),
+      'runtime/electron-helper/host-liveness.js 必须存在（main.js require 它）',
+    );
   });
 });

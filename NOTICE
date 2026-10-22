@@ -1,0 +1,50 @@
+# NOTICE —— 来源与归属
+
+## 原始作品
+
+本项目是以下作品的**派生作品（derivative work）**，不是原创项目：
+
+| 项 | 内容 |
+| --- | --- |
+| 项目名 | dsh-pet |
+| 原作者 | **PC2005-cloud** |
+| 原始仓库 | https://github.com/PC2005-cloud/dsh-pet |
+| 原始许可 | MIT License（见 [LICENSE](LICENSE)，版权行 `Copyright (c) 2026 PC2005-cloud` 原样保留） |
+| 原始形态 | DeepSeek Harness（DSH）编辑器插件 |
+
+原作者创作并拥有以下内容的著作权，本项目仅在其基础上做形态改造：
+
+- 全部动画素材（`dsh-pet/assets/webm`、`dsh-pet/assets/pic`、`dsh-pet/assets/memes`、`dsh-pet/assets/fonts`）
+- 桌宠渲染与交互实现（`dsh-pet/runtime/electron-helper`、`dsh-pet/src/shared`）
+- 宿主半侧的路由、配置聚合、状态仓、余额/碎碎念/对话逻辑（`dsh-pet/src/host`）
+- 配置体系与默认配置（`dsh-pet/assets/config.jsonc`）
+- 素材生成流水线（`scripts/*.py`、`prompts/`、`video/`、`.github/workflows/hevc-alpha.yml`）
+
+## 本派生作品
+
+| 项 | 内容 |
+| --- | --- |
+| 仓库 | https://github.com/studentWu666/dsh-pet-standalone |
+| 维护者 | studentWu666 |
+| 改造目标 | 去掉 DSH 插件形态与宿主依赖，使其成为可独立运行的桌面应用 |
+| 性质 | **非官方**改造版。原作者未参与、未背书本项目 |
+
+改造内容（详见 README 的「从插件版改造的清单」）：
+
+1. 删除插件清单与挂载声明（`cordis.patch.yml`、`package.json` 的 `dsh` 字段、`@deepseek-ai/*` peer 依赖）
+2. 用 `dsh-pet/src/compat/` 三个本地等价实现替代原先由宿主提供的模块
+3. 删除浏览器半侧（`dsh-pet/src/client/`，DSH 网页内注入的 React overlay）
+4. 菜单与打开方式去宿主化（「打开网站/打开软件」→「打开设置」）
+5. 新增独立运行体验：托盘退出、静默启动脚本、日志落盘、单实例保护、绿色版打包
+
+## 使用建议
+
+- 想要**插件形态**（嵌在 DeepSeek Harness 里）→ 请使用原仓库，本仓库不提供该形态。
+- 想要**独立桌面应用** → 使用本仓库。
+- 发现**素材/动画/玩法**相关的问题或想法 → 请反馈给原作者。
+- 发现**独立化改造**相关的问题 → 反馈到本仓库 issue。
+
+## 许可
+
+本派生作品同样以 MIT 许可发布，并保留原始版权声明。任何再分发都必须同时保留
+[LICENSE](LICENSE) 中的原始版权行与本 NOTICE 的归属说明。

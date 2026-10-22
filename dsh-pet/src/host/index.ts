@@ -99,8 +99,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
-import { credentialRef } from '@deepseek-ai/dsh-credentials';
+import { resolveAppHome } from '../compat/home-paths';
+import { credentialRef } from '../compat/credentials';
 import { listBalanceProviders, queryBalance, registerBalanceProvider } from './balance/index';
 import { generateWhisper } from './whisper';
 import { automaticWhisperSchedule } from './whisper-policy';
@@ -169,10 +169,12 @@ import {
   resolveElectronPath,
 } from './helper-process';
 
-/** 插件行 id（与 cordis.patch.yml 一致） */
-export const name = 'pet';
-/** 需要注入的服务：webServer（路由）+ agentDefaultModel（当前服务商）+ credentials（凭证）+ llm（对话模型调用）+ commands（/balance 斜杠命令）+ connection（桌面 Helper「打开网站」用的已鉴权站点 URL） */
-export const inject = ['webServer', 'agentDefaultModel', 'credentials', 'llm', 'commands', 'connection'];
+/**
+ * 宿主半侧入口：`apply(ctx)` 把路由表、状态仓与桌面 Helper 挂到给定上下文上。
+ *
+ * 独立版不依赖任何插件框架：`ctx` 由 `src/standalone/context.ts` 提供的本地实现填充
+ * （webServer / llm / credentials / agentDefaultModel / connection 等），形状与调用点一致。
+ */
 
 /** 本包目录：宿主构建产物位于 lib/，其上一级即包根。 */
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -185,15 +187,6 @@ const PACKAGE_MEMES_DIR = join(PACKAGE_ROOT_ASSETS, 'memes');
 
 /** 路由前缀 */
 const ROUTE_PREFIX = '/dsh-pet-7340';
-
-/**
- * 宿主是不是 **DSH 桌面应用**（Electron 宿主）。
- *
- * 判据只用 `process.versions.electron`：桌面应用以 `ELECTRON_RUN_AS_NODE=1` 跑宿主（见 dsh.cmd），
- * 该字段照样在；而 `dsh web` / 独立模式都是纯 Node 进程，取不到它。据此把「打开网站」自动分派：
- * 桌面宿主 → 唤起桌面应用窗口（helper 走 `dsh://open`），其余 → 浏览器打开站点。
- */
-const isDesktopHost = (): boolean => Boolean(process.versions.electron);
 
 /** 不同扩展名对应的 Content-Type 映射 */
 const MIME: Record<string, string> = {
@@ -310,7 +303,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DSH 注入的 ctx（webServer/locale 等 service 无静态类型）
 export function apply(ctx: any): void {
   // 用户数据根：配置与用户素材统一收敛于此（扩展包按 <插件id> 各自建目录）
-  const dshHome = resolveDshHome();
+  const dshHome = resolveAppHome();
   const userRoot = join(dshHome, 'dsh-pet');
   // 用户主配置（可编辑层）与文件宠物目录；配置读取/合并统一走 readAllConfig（./config）。
   // 主配置是 **JSONC**（main-config.jsonc）——与包内默认 config.jsonc 同名同格式：
@@ -1006,17 +999,16 @@ export function apply(ctx: any): void {
         electronPath,
         env: {
           DSH_PET_CONFIG_URL: configUrl,
-          // 已鉴权站点 URL（含本进程启动令牌）：只供 helper 的「打开网站」使用，任何日志都不许出现它
+          // 已鉴权设置页 URL（含本进程启动令牌）：只供 helper 的「打开设置」使用，任何日志都不许出现它
           DSH_PET_SITE_URL: siteUrl,
-          // 宿主形态决定工具项「打开网站」的去向（同名菜单项，两端两种语义）：
-          //   desktop = 宿主是 DSH 桌面应用 → 唤起桌面应用主窗口（helper 走 dsh://open，见 main.js）
-          //   site    = dsh web / 独立模式 → 系统默认浏览器打开站点（原行为，别破坏）
-          DSH_PET_OPEN_TARGET: isDesktopHost() ? 'desktop' : 'site',
           DSH_PET_SCALE: '1',
           // 打开 bridge 协议：main.js 注册 dsh-pet-bridge scheme，把渲染端请求经管道转给宿主
           DSH_PET_BRIDGE: '1',
           // 每只桌面宠物一个局部小窗口：透传宠物列表（[{id,size}]）
           DSH_PET_PETS: JSON.stringify(desktopPetList()),
+          // 独立的 Chromium profile 目录：与"已安装的插件版"分开，避免两者同时运行时抢同一份
+          // profile 锁（表现为 GPU cache 创建失败、GPU 进程 FATAL、helper 崩溃重启循环）
+          DSH_PET_USER_DATA: join(dshHome, 'dsh-pet', 'electron-profile'),
         },
         // bridge 协议处理器 = HTTP 路由同一份 handlePetRoute（业务逻辑唯一，两端天然一致）；
         // 素材过文件路径（main.js 自行读盘），json/text 过 body
@@ -1039,6 +1031,12 @@ export function apply(ctx: any): void {
             contentType: 'application/json; charset=utf-8',
             body: JSON.stringify(result.obj),
           };
+        },
+        // 托盘「退出桌宠」：helper 已按约定码退出，这里让宿主整体收尾
+        // （独立版的 ctx.standaloneQuit 由 standalone/cli.ts 注入；纯库用法下没有它，
+        //  行为退化为"只停守护、宿主继续运行"，不会反复重启宠物）
+        onUserQuit: () => {
+          (ctx as { standaloneQuit?: { request?: () => void } }).standaloneQuit?.request?.();
         },
       },
       ctx.logger ?? console,

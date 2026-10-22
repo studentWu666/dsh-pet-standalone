@@ -32,12 +32,16 @@ npm-debug.log*
 # ── 临时/备份目录 ──
 temp/
 
-# ── dsh-pet 构建产物（全部由 src/ 构建生成，不入仓库；克隆后先 npm run prepare:webm）──
-#   lib/                      tsdown bundle（lib/index.js、lib/client.js）+ tsc 声明（lib/types/*.d.ts，npm run types）
+# ── dsh-pet 构建产物（全部由 src/ 构建生成，不入仓库）──
+#   lib/                      tsdown bundle（lib/main.js、lib/index.js）
 #   runtime/electron-helper/shared-core.js  桌面共享纯逻辑（scripts/build-desktop-core.mjs 产出，window.PetShared）
-# （lib/types 曾是手写声明才保留跟踪；自 gen-types.mjs 起为生成产物，与 lib/*.js 同等对待）
+#   dist/                     绿色版产物（scripts/package-portable.mjs 产出，含 node.exe 与依赖，体积很大）
 dsh-pet/lib/
+dsh-pet/dist/
 dsh-pet/runtime/electron-helper/shared-core.js
+
+# ── 运行时日志（本地排障用）──
+dsh-pet/run*.log
 
 # ── IDE / 编辑器 ──
 .idea/

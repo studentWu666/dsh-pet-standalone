@@ -12,7 +12,7 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -26,9 +26,11 @@ import {
   hasGraphicalDisplay,
   helperRunIsStable,
   helperSpawnEnv,
+  isUserQuitExit,
   restartBackoffDelayMs,
   resolveElectronPath,
   shouldCircuitBreak,
+  USER_QUIT_EXIT_CODE,
 } from './helper-process.ts';
 
 test('Electron 安装目录无法创建时返回 undefined，不产生未处理拒绝', async (t) => {
@@ -466,4 +468,88 @@ describe('HelperProcess failed spawn recovery', () => {
       },
     );
   }
+});
+
+describe('托盘「退出桌宠」的退出码约定', () => {
+  test('88 = 用户主动退出；其它码一律按崩溃处理', () => {
+    assert.equal(USER_QUIT_EXIT_CODE, 88, '退出码是对外契约，改动必须同时改 runtime/electron-helper/main.js');
+    assert.equal(isUserQuitExit(88), true);
+    for (const code of [0, 1, 88 + 1, 87, 143, null]) {
+      assert.equal(isUserQuitExit(code as number | null), false, `退出码 ${String(code)} 不得被当成用户退出`);
+    }
+  });
+
+  test('helper 侧与宿主侧用的是同一个数（改名/改值只改一侧即失败）', () => {
+    const main = readFileSync(new URL('../../runtime/electron-helper/main.js', import.meta.url), 'utf8');
+    assert.match(
+      main,
+      new RegExp(`const USER_QUIT_EXIT_CODE = ${USER_QUIT_EXIT_CODE};`),
+      'main.js 的 USER_QUIT_EXIT_CODE 必须与宿主侧常量一致',
+    );
+    assert.ok(/app\.exit\(USER_QUIT_EXIT_CODE\)/.test(main), '托盘「退出桌宠」必须按约定码退出');
+  });
+
+  test('托盘菜单里必须有「退出桌宠」——终端隐藏运行时这是唯一的退出入口', () => {
+    const main = readFileSync(new URL('../../runtime/electron-helper/main.js', import.meta.url), 'utf8');
+    assert.ok(/label: '退出桌宠'/.test(main), '托盘菜单缺少「退出桌宠」');
+  });
+});
+
+describe('托盘「退出桌宠」—— 用户退出不得被当成崩溃重启', () => {
+  const wait = (ms: number) => new Promise((resolve2) => setTimeout(resolve2, ms));
+
+  test('helper 以 88 退出：触发一次 onUserQuit，且不排重启', async () => {
+    let quits = 0;
+    const logs: string[] = [];
+    const hp = new HelperProcess(
+      {
+        // 用真实子进程跑出真实的 exit code（不 mock，直接钉住 spawn → exit 这条链）
+        command: process.execPath,
+        args: ['-e', 'process.exit(88)'],
+        onUserQuit: () => {
+          quits += 1;
+        },
+      },
+      {
+        info: (m: unknown) => logs.push(String(m)),
+        warn: (m: unknown) => logs.push(String(m)),
+        error: (m: unknown) => logs.push(String(m)),
+      },
+    );
+    hp.start();
+    const deadline = Date.now() + 5000;
+    while (quits === 0 && Date.now() < deadline) await wait(30);
+    await wait(300); // 给"误重启"留出观察窗（默认首延 750ms 之内不会再拉起，但日志会先出现）
+    hp.stop('test-cleanup');
+
+    assert.equal(quits, 1, '必须触发且只触发一次 onUserQuit');
+    assert.ok(
+      !logs.some((line) => line.includes('restarting')),
+      '用户主动退出绝不能走重启分支（否则点了退出宠物又回来）',
+    );
+  });
+
+  test('普通非零退出（如崩溃 1）仍走重启：守卫不能把崩溃也吞掉', async () => {
+    const logs: string[] = [];
+    const hp = new HelperProcess(
+      {
+        command: process.execPath,
+        args: ['-e', 'process.exit(1)'],
+        restartDelayMs: 60_000, // 只观察"是否排了重启"，不让它真的再拉起
+      },
+      {
+        info: (m: unknown) => logs.push(String(m)),
+        warn: (m: unknown) => logs.push(String(m)),
+        error: (m: unknown) => logs.push(String(m)),
+      },
+    );
+    hp.start();
+    const deadline = Date.now() + 5000;
+    while (!logs.some((line) => line.includes('restarting')) && Date.now() < deadline) await wait(30);
+    hp.stop('test-cleanup');
+    assert.ok(
+      logs.some((line) => line.includes('restarting')),
+      '普通崩溃必须继续重启（区分用户意图不能以放弃崩溃自愈为代价）',
+    );
+  });
 });

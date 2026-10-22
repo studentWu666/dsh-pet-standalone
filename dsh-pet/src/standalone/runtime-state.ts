@@ -38,3 +38,20 @@ export function writeStandaloneRuntime(home: string, details: RuntimeDetails): (
     }
   };
 }
+
+/**
+ * 上一次运行留下的 pid（文件不存在 / 内容损坏 / pid 非法时返回 undefined）。
+ *
+ * 用途：单实例保护。静默启动（托盘 / vbs）没有终端可提示，用户重复双击很容易开出第二个实例
+ * —— 两个宿主、两个托盘图标、两份宠物，互相抢端口。启动时读它并确认进程还活着即可判断。
+ */
+export function readRuntimePid(home: string): number | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(join(home, 'dsh-pet', 'standalone-runtime.json'), 'utf8')) as {
+      pid?: unknown;
+    };
+    return typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0 ? parsed.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}

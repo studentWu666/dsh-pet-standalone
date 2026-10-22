@@ -16,22 +16,26 @@ export interface CliOptions {
   port: number;
   check: boolean;
   help: boolean;
+  /** 允许多开（跳过单实例保护）：调试或确实要同时开两份时用 */
+  multi: boolean;
 }
 
 /** `--help` 正文 */
-export const USAGE = `dsh-pet 独立模式（不需要 DSH）
+export const USAGE = `桌面宠物 dsh-pet（独立版，不需要任何宿主应用）
 
-用法：dsh-pet-standalone [选项]
+用法：dsh-pet [选项]
 
 选项：
-  --port <端口>   监听端口（默认 ${DEFAULT_STANDALONE_PORT}；被占用时自动向后顺延）
+  --port <端口>   本机服务监听端口（默认 ${DEFAULT_STANDALONE_PORT}；被占用时自动向后顺延）
   --check         只体检：打印配置来源、宠物清单与 Electron 状态，不启动窗口
+  --multi         允许多开（默认单实例：已在运行时直接退出并提示）
   -h, --help      显示本帮助
 
 说明：
-  桌宠在独立模式下以「透明置顶小窗」运行；浏览器内浮层需要有 DSH 网页，独立模式不提供。
-  对话与碎碎念可在本机 AI 设置页配置 API 后显式启用；未配置时不发送模型请求。
-  余额 / DSH 会话工作状态 / 系统通知仍需要 DSH 宿主。
+  桌宠以「透明置顶小窗」运行：可拖拽、甩动、右键点播动作、改配置后重载。
+  退出请用桌面托盘图标 →「退出桌宠」（会连同后台服务一起收尾）。
+  碎碎念与对话在「打开设置」页配置自己的大模型 API 后启用；未配置时不发送任何模型请求。
+  余额查询需要宿主侧凭证，独立版不提供（点「查看余额」会明确提示不可用）。
 `;
 
 /**
@@ -40,11 +44,13 @@ export const USAGE = `dsh-pet 独立模式（不需要 DSH）
  * @returns 选项，或 `{ error }`（调用方打印用法并以 2 退出）
  */
 export function parseArgs(argv: string[]): { options: CliOptions } | { error: string } {
-  const options: CliOptions = { port: DEFAULT_STANDALONE_PORT, check: false, help: false };
+  const options: CliOptions = { port: DEFAULT_STANDALONE_PORT, check: false, help: false, multi: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? '';
     if (arg === '--check') {
       options.check = true;
+    } else if (arg === '--multi') {
+      options.multi = true;
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
     } else if (arg === '--port' || arg.startsWith('--port=')) {

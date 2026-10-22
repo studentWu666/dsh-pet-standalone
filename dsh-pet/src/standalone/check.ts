@@ -41,8 +41,8 @@ export function runCheck(logger: StandaloneLogger): number {
   const electron = resolveElectronPath();
   const lines: string[] = [
     `Node            ${process.version}（${process.platform}-${process.arch}）`,
-    `插件            dsh-pet@${packageVersion(packageRoot)}  ${packageRoot}`,
-    `DSH_HOME        ${home}`,
+    `版本            dsh-pet@${packageVersion(packageRoot)}  ${packageRoot}`,
+    `数据目录        ${home}`,
     `用户配置        ${paths.userFile}${existsSync(paths.userFile) ? '' : '（不存在 → 用包内默认）'}`,
     `文件宠物目录    ${paths.petDir}${existsSync(paths.petDir) ? '' : '（不存在）'}`,
     `内置默认配置    ${paths.defaultFile}${existsSync(paths.defaultFile) ? '' : '  ✗ 缺失'}`,
@@ -59,7 +59,7 @@ export function runCheck(logger: StandaloneLogger): number {
   if (!existsSync(paths.defaultFile)) {
     return fail(
       '包内默认配置读不到：很可能是在**直接跑源码**（包根被解析成了 src/）。' +
-        '独立模式请用构建产物：npm run bundle 后 node lib/standalone.js，或 npm run standalone。',
+        '请用构建产物：npm run build 后 npm start（或 node lib/main.js）。',
     );
   }
 
@@ -81,7 +81,7 @@ export function runCheck(logger: StandaloneLogger): number {
       }`,
     );
     for (const line of lines) logger.info(line);
-    logger.info('结论：配置与 Electron 就绪，可以直接启动（npm run standalone）。');
+    logger.info('结论：配置与 Electron 就绪，可以直接启动（npm start）。');
     return 0;
   } catch (error) {
     return fail(`读配置失败：${error instanceof Error ? error.message : String(error)}`);

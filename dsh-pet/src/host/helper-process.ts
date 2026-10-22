@@ -59,6 +59,24 @@ interface HelperOptions {
   restartDelayMs?: number;
   /** bridge 协议处理器：renderer 的每条请求（配置/余额/碎碎念/素材等）都经它应答 */
   bridgeHandler?: BridgeHandler;
+  /**
+   * 用户从托盘「退出桌宠」时触发（helper 以 USER_QUIT_EXIT_CODE 退出）。
+   * 不传则只停止守护、不再重启 helper —— 桌宠消失但宿主继续运行。
+   */
+  onUserQuit?: () => void;
+}
+
+/**
+ * 「用户主动退出」的退出码约定（与 runtime/electron-helper/main.js 的 USER_QUIT_EXIT_CODE 一致）。
+ *
+ * 宿主默认把 helper 的退出当崩溃处理并自动重启；托盘「退出桌宠」是用户意图，
+ * 必须靠这个码区分，否则点了退出 750ms 后宠物又回来了。
+ */
+export const USER_QUIT_EXIT_CODE = 88;
+
+/** 该退出码是否表示"用户要求退出"（纯函数，便于单测） */
+export function isUserQuitExit(code: number | null): boolean {
+  return code === USER_QUIT_EXIT_CODE;
 }
 
 type Logger = {
@@ -350,12 +368,16 @@ export class HelperProcess {
     child.once('exit', (code, signal) => {
       if (this.child !== child) return;
       this.child = undefined;
-      if (!this.stopping) {
-        this.logger.warn?.(
-          `dsh-pet desktop helper exited (code=${String(code)}, signal=${String(signal)}); restarting`,
-        );
-        this.scheduleRestart();
+      if (this.stopping) return;
+      // 托盘「退出桌宠」：用户意图，不是崩溃。停止守护并交给宿主收尾，绝不重启。
+      if (isUserQuitExit(code)) {
+        this.stopping = true;
+        this.logger.info?.('桌宠已由用户从托盘退出');
+        this.options.onUserQuit?.();
+        return;
       }
+      this.logger.warn?.(`dsh-pet desktop helper exited (code=${String(code)}, signal=${String(signal)}); restarting`);
+      this.scheduleRestart();
     });
     child.stdout.on('data', (chunk) => {
       this.onStdoutChunk(String(chunk));

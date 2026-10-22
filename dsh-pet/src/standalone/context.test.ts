@@ -155,3 +155,19 @@ describe('服务替身的降级口径 —— 显式失败，不假装成功', ()
     }, /独立模式未接入模型/);
   });
 });
+
+describe('托盘「退出桌宠」的宿主侧出口', () => {
+  test('传了 onQuit：ctx.standaloneQuit.request 可直接调用', () => {
+    let calls = 0;
+    const ctx = createStandaloneContext({ port: 0, logger: silentLogger(), onQuit: () => (calls += 1) });
+    const quit = (ctx.ctx as { standaloneQuit?: { request: () => void } }).standaloneQuit;
+    assert.ok(quit, '注入 onQuit 后必须暴露 standaloneQuit，否则宿主的托盘退出无人接');
+    quit.request();
+    assert.equal(calls, 1);
+  });
+
+  test('没传 onQuit（纯库用法）：不暴露该服务，宿主退化为只停守护', () => {
+    const ctx = createStandaloneContext({ port: 0, logger: silentLogger() });
+    assert.equal((ctx.ctx as { standaloneQuit?: unknown }).standaloneQuit, undefined);
+  });
+});
