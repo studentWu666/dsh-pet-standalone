@@ -13,6 +13,12 @@
 
 **它不依赖任何编辑器、IDE 或宿主应用**——就是一只桌宠，双击即出现透明置顶小窗。
 
+<p align="center">
+  <img src="assets/screenshots/dsh-pet-running-1.png" alt="桌宠运行效果" width="760">
+  <br>
+  <sub>效果图截图来自原项目，桌宠外观与动作与插件版一致</sub>
+</p>
+
 ---
 
 ## 快速开始

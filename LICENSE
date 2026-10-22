@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 PC2005-cloud
+Copyright (c) 2026 studentWu666 (standalone edition modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,12 +23,9 @@ SOFTWARE.
 
 ---
 
-Modifications for the standalone edition:
-Copyright (c) 2026 studentWu666
+Attribution:
+  Original work "dsh-pet" by PC2005-cloud
+  https://github.com/PC2005-cloud/dsh-pet
 
-Original work: "dsh-pet" by PC2005-cloud
-https://github.com/PC2005-cloud/dsh-pet
-
-This derivative keeps the original copyright notice above unchanged.
-See NOTICE for the full attribution and the list of modifications.
-
+  This standalone edition is a derivative work. See NOTICE for the full
+  attribution and the list of modifications.
