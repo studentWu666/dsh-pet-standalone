@@ -37,6 +37,8 @@ import {
 } from './context';
 import { configPathsFor, describePets, isDesktopVisible, parseArgs, USAGE } from './options';
 import { listenStandaloneServer } from './server';
+import { readRuntimeHandshake } from './runtime-state';
+import { wakeRunningInstance } from './wake';
 
 /** 该 pid 的进程是否还活着（EPERM 表示存在但无权限查询，同样算活着） */
 function processAlive(pid: number): boolean {
@@ -46,6 +48,53 @@ function processAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+/**
+ * 已有实例在跑时：请它把收起的宠物放回桌面，而不是留一句没人看得见的日志。
+ *
+ * 为什么值得这么做：静默启动（vbs / 双击图标）没有控制台，`logger.error` 只会写进日志文件；
+ * 而宠物的显示开关在托盘里，托盘图标又可能落在 Windows 的隐藏图标区。对用户来说，
+ * 「双击 → 什么都没发生」与「程序坏了」没有区别。让双击成为一次**幂等的唤醒**，
+ * 既保留了单实例保护（不会叠出第二只），又总能把桌宠叫回来。
+ */
+async function wakeExisting(logger: StandaloneLogger, home: string, pid: number): Promise<void> {
+  const handshake = readRuntimeHandshake(home);
+  if (!handshake || handshake.pid !== pid) {
+    // 老版本写的运行状态里没有端口/令牌：只能提示，不能猜
+    logger.error(
+      `桌宠已经在运行（pid ${pid}），但读不到它的端口与令牌，无法自动叫回宠物。` +
+        '请先从桌面托盘选择「退出桌宠」（找不到图标时看通知区展开的隐藏图标），再重新启动；' +
+        '确实要同时开多份，请加 --multi。',
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const result = await wakeRunningInstance(handshake.port, handshake.token);
+  if (!result.reachable) {
+    logger.error(
+      `桌宠进程（pid ${pid}）还在，但端口 ${handshake.port} 没有应答——它可能正处于启动/收尾过程。` +
+        '稍等几秒再双击一次；若始终无响应，请在任务管理器结束该进程后重新启动。',
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (result.alreadyVisible) {
+    logger.info(`桌宠已经在运行（pid ${pid}），宠物就在桌面上——无需再次启动。`);
+    return;
+  }
+  if (result.restored.length > 0) {
+    logger.info(
+      `桌宠已经在运行（pid ${pid}）：已把收起的宠物放回桌面（${result.restored.join('、')}）。` +
+        '要彻底关闭，请用桌面托盘的「退出桌宠」。',
+    );
+    return;
+  }
+  logger.error(
+    `桌宠已经在运行（pid ${pid}），但把宠物放回桌面失败。请打开桌面托盘勾选宠物；` +
+      '找不到托盘图标时，看通知区展开的隐藏图标。',
+  );
+  process.exitCode = 1;
 }
 
 /** 启动独立模式：先起服务拿到端口，再 `apply`（宿主据此拼桌面 Helper 的 configUrl） */
@@ -64,15 +113,12 @@ async function run(logger: StandaloneLogger, options: { port: number; multi: boo
   }
 
   // 单实例保护：静默启动没有终端可提示，重复双击会开出第二个实例（两个托盘、两份宠物、抢端口）。
-  // 上一次的 pid 还活着 → 直接说明并退出。
+  // 上一次的 pid 还活着 → 不再报错退出，而是把它「叫醒」（把收起的宠物放回桌面）：
+  // 双击启动器的真实意图就是「我要看到桌宠」，见下面的 wakeExisting。
   if (!options.multi) {
     const running = readRuntimePid(home);
     if (running !== undefined && running !== process.pid && processAlive(running)) {
-      logger.error(
-        `桌宠已经在运行（pid ${running}）。要重新启动，请先从桌面托盘选择「退出桌宠」；` +
-          '确实要同时开多份，请加 --multi。',
-      );
-      process.exitCode = 1;
+      await wakeExisting(logger, home, running);
       return;
     }
   }

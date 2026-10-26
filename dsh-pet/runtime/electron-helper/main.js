@@ -797,6 +797,11 @@ async function startTray() {
     );
     // Windows 上 setContextMenu 只接管右键，左键默认什么都不做（macOS 相反：左键即弹菜单）
     if (TRAY_PLATFORM.leftClickPopsMenu) tray.on('click', () => tray.popUpContextMenu());
+    // 就绪日志：0 只桌面宠物时，托盘是本进程唯一的可见痕迹 —— 出问题时先看这一行
+    console.error(
+      `[dsh-pet-desktop-helper] tray ready: ${pets.length} pet(s), ` +
+        `${pets.filter((pet) => isDesktopDisplay(pet.display)).length} on desktop`,
+    );
   } catch (e) {
     console.error('[dsh-pet-desktop-helper] tray init failed:', String(e && e.message ? e.message : e));
   }

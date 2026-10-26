@@ -8,6 +8,7 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { modelCandidates } from '../host/model-selection.ts';
 import { generateWhisper } from '../host/whisper.ts';
@@ -169,5 +170,34 @@ describe('托盘「退出桌宠」的宿主侧出口', () => {
   test('没传 onQuit（纯库用法）：不暴露该服务，宿主退化为只停守护', () => {
     const ctx = createStandaloneContext({ port: 0, logger: silentLogger() });
     assert.equal((ctx.ctx as { standaloneQuit?: unknown }).standaloneQuit, undefined);
+  });
+});
+
+describe('桌面外壳常驻（收起宠物后重启不能连托盘一起消失）', () => {
+  test('默认注入 desktopShell.keepAlive = true：独立版的「在运行」= 托盘在', () => {
+    const ctx = createStandaloneContext({ port: 0, logger: silentLogger() });
+    const shell = (ctx.ctx as { desktopShell?: { keepAlive?: boolean } }).desktopShell;
+    assert.equal(shell?.keepAlive, true, '独立版必须让桌面外壳常驻，否则宠物收起后无从恢复');
+  });
+
+  test('嵌入别的主机时可显式关掉，不强拉 Electron', () => {
+    const ctx = createStandaloneContext({ port: 0, logger: silentLogger(), keepDesktopShell: false });
+    const shell = (ctx.ctx as { desktopShell?: { keepAlive?: boolean } }).desktopShell;
+    assert.equal(shell?.keepAlive, false);
+  });
+
+  test('宿主两处「要不要拉起 Helper」的闸门都走 desktopShellWanted（不得回退成只认 hasDesktopPet）', () => {
+    const host = readFileSync(new URL('../host/index.ts', import.meta.url), 'utf8');
+    // 旧写法：`if (!hasDesktopPet && !desktopModeEverActive) return;` —— 它是进程内粘性变量，
+    // 重启归零后就不再拉起 Electron，连托盘一起没了（用户实测：node 在跑、桌面一片空）。
+    assert.ok(
+      !/!hasDesktopPet\s*&&\s*!desktopModeEverActive/.test(host),
+      '闸门不得直接判 hasDesktopPet/desktopModeEverActive：必须合上 shellKeepAlive',
+    );
+    assert.equal(
+      (host.match(/if \(!desktopShellWanted\(\)\) return;/g) ?? []).length,
+      2,
+      'launchHelper 与 startHelper 两处闸门都必须走 desktopShellWanted',
+    );
   });
 });

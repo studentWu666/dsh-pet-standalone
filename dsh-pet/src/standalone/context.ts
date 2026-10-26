@@ -66,6 +66,13 @@ export interface StandaloneContextOptions {
    * 不传则托盘退出只会让 helper 停下、宿主继续运行。
    */
   onQuit?: () => void;
+  /**
+   * 是否让桌面外壳（Electron 进程 + 托盘图标）常驻，即使当前没有任何桌面宠物。默认 **true**。
+   * 独立版没有网页设置页，托盘是唯一能把收起的宠物放回来的入口——否掉它就会出现
+   * 「宠物收起后退出，下次启动连托盘都不见了，只剩 node 空转」。嵌进别的主机
+   * （有自己的界面）时可显式传 false，避免白拉一个 Electron 进程。
+   */
+  keepDesktopShell?: boolean;
 }
 
 export interface StandaloneContext {
@@ -208,6 +215,12 @@ export function createStandaloneContext(options: StandaloneContextOptions): Stan
     commands: { register: (): (() => void) => () => {} },
     // 桌面托盘的「退出桌宠」→ 宿主整体收尾（见 StandaloneContextOptions.onQuit）
     ...(options.onQuit ? { standaloneQuit: { request: options.onQuit } } : {}),
+    /**
+     * 桌面外壳常驻：独立版里进程活着就该有托盘。
+     * 不在 standalone/cli.ts 传默认值，而是这里的默认注入——「独立模式」这个形态本身
+     * 就决定了托盘是唯一入口，不希望每个调用点都记得传。
+     */
+    desktopShell: { keepAlive: options.keepDesktopShell ?? true },
     agentDefaultModel: {
       currentSelection: (): { provider: string; model: string } =>
         ai?.currentSelection() ?? { provider: STANDALONE_PROVIDER, model: '' },

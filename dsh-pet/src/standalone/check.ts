@@ -77,7 +77,9 @@ export function runCheck(logger: StandaloneLogger): number {
     const desktopVisible = flattenPetList(merged).filter(isDesktopVisible);
     lines.push(
       `桌面小窗        ${desktopVisible.length} 只${
-        desktopVisible.length === 0 ? '（display 需要 desktop 或 both，否则独立模式没有可显示的宠物）' : ''
+        desktopVisible.length === 0
+          ? '（display 需要 desktop 或 both。0 只也会保留托盘——从托盘勾选或再双击启动器即可放回桌面）'
+          : ''
       }`,
     );
     for (const line of lines) logger.info(line);

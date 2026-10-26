@@ -55,3 +55,33 @@ export function readRuntimePid(home: string): number | undefined {
     return undefined;
   }
 }
+
+/** 已有实例的回环握手信息（端口 + 本次运行的令牌） */
+export interface RuntimeHandshake {
+  pid: number;
+  port: number;
+  token: string;
+}
+
+/**
+ * 读上一次运行留下的端口与令牌，用于「把已有实例叫醒」（见 standalone/wake.ts）。
+ * 任一字段缺失/非法即返回 undefined —— 老版本写的文件可能没有这些字段，不能因此崩启动器。
+ */
+export function readRuntimeHandshake(home: string): RuntimeHandshake | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(join(home, 'dsh-pet', 'standalone-runtime.json'), 'utf8')) as {
+      pid?: unknown;
+      port?: unknown;
+      token?: unknown;
+    };
+    const pid = parsed.pid;
+    const port = parsed.port;
+    const token = parsed.token;
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return undefined;
+    if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
+    if (typeof token !== 'string' || token.length === 0) return undefined;
+    return { pid, port, token };
+  } catch {
+    return undefined;
+  }
+}

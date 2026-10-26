@@ -186,7 +186,7 @@ const PACKAGE_ROOT_ASSETS = join(PACKAGE_ROOT, 'assets');
 const PACKAGE_MEMES_DIR = join(PACKAGE_ROOT_ASSETS, 'memes');
 
 /** 路由前缀 */
-const ROUTE_PREFIX = '/dsh-pet-7340';
+export const ROUTE_PREFIX = '/dsh-pet-7340';
 
 /** 不同扩展名对应的 Content-Type 映射 */
 const MIME: Record<string, string> = {
@@ -941,6 +941,21 @@ export function apply(ctx: any): void {
    * 纯浏览器用户（从未有过桌面宠物）不受影响：照旧不探测、不下载、不拉起 Electron。
    */
   let desktopModeEverActive = false;
+
+  /**
+   * 宿主是否声明「桌面外壳（Electron + 托盘）必须常驻」。
+   *
+   * 独立版恒为真（standalone/context.ts 注入 desktopShell.keepAlive）：那里没有网页设置页，
+   * 托盘是**唯一**能把收起的宠物放回来的入口。`desktopModeEverActive` 只活在进程内，
+   * 一旦用户把宠物全收起再退出，下次启动它就归零，于是「没有桌面宠物 → 不拉起 Electron →
+   * 连托盘一起消失，只剩 node 在后台空转」——用户再也点不回来（真实反馈）。
+   * 独立版里「进程在运行」就应当等价于「托盘在」，所以不走这个粘性推断。
+   */
+  const shellKeepAlive = (): boolean =>
+    (ctx as { desktopShell?: { keepAlive?: boolean } }).desktopShell?.keepAlive === true;
+
+  /** 是否仍需守护桌面 Helper：有桌面宠物 / 本次运行曾有过 / 宿主要求外壳常驻 */
+  const desktopShellWanted = (): boolean => hasDesktopPet || desktopModeEverActive || shellKeepAlive();
   const refreshDesktop = (): void => {
     hasDesktopPet = false;
     try {
@@ -972,7 +987,7 @@ export function apply(ctx: any): void {
   /** 用已确认存在的 Electron 路径拉起桌面 Helper（每只桌面宠物一个局部小窗口）。 */
   const launchHelper = (electronPath: string | undefined): void => {
     if (helper || disposed) return;
-    if (!hasDesktopPet && !desktopModeEverActive) return; // 无桌面宠物且桌面模式从未启用过：不启动
+    if (!desktopShellWanted()) return; // 没有桌面宠物、且外壳也不必常驻：不启动
     const port = typeof ctx.webServer?.port === 'number' ? ctx.webServer.port : 0;
     if (!port || port <= 0) {
       // webServer 可能尚未完成监听（OS 分配端口时 port 短暂为 0）：延迟重试。
@@ -1055,7 +1070,7 @@ export function apply(ctx: any): void {
    *  （不 spawn 子进程，CLI node 与 DSH Desktop 均适用），下载完成后自动拉起。 */
   const startHelper = (): void => {
     if (helper || electronEnsure || disposed) return;
-    if (!hasDesktopPet && !desktopModeEverActive) return; // 无桌面宠物且桌面模式从未启用过：不启动
+    if (!desktopShellWanted()) return; // 没有桌面宠物、且外壳也不必常驻：不启动
     // 无图形显示环境（Linux 服务器 / 容器）：直接放弃，不探测、不下载、不拉起。
     // 否则 Electron 会「拉起即崩」，被守护循环反复重启并刷满 core dump。
     if (!hasGraphicalDisplay()) {
